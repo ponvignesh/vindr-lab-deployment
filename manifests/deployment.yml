@@ -1,0 +1,19 @@
+apiVersion : apps/v1
+kind: Deployment
+metadata:
+  name: "vindrlab-a9df"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: "vindrlab-a9df"
+  template:
+    metadata:
+      labels:
+        app: "vindrlab-a9df"
+    spec:
+      containers:
+        - name: "vindrlab-a9df"
+          image: "vindrlab.azurecr.io/vindrlab"
+          ports:
+          - containerPort: 8080
