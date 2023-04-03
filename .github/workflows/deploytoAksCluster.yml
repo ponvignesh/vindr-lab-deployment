@@ -1,0 +1,63 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    
+    - uses: actions/checkout@master
+    
+    - uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Create ACR
+      id: create-acr
+      run: |
+        az acr create -n vindrlab -g vindrlab9205-rg --location "East US" --sku Standard --admin-enabled
+        echo "::set-output name=acr_username::`az acr credential show -n vindrlab --query username | xargs`"
+        echo "::set-output name=acr_password::`az acr credential show -n vindrlab --query passwords[0].value | xargs`"
+        echo "::add-mask::`az acr credential show -n vindrlab --query passwords[0].value | xargs`"
+
+    - uses: azure/docker-login@v1
+      with:
+        login-server: vindrlab.azurecr.io
+        username: ${{ steps.create-acr.outputs.acr_username }}
+        password: ${{ steps.create-acr.outputs.acr_password }}
+
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/vindr-lab-deployment/docker" -f  "vindr-lab-deployment/docker/docker-compose.yml" -t vindrlab.azurecr.io/vindrlab:${{ github.sha }} --label dockerfile-path=vindr-lab-deployment/docker/docker-compose.yml
+        docker push vindrlab.azurecr.io/vindrlab:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      id: login
+      with:
+         kubeconfig: ${{ secrets.aks_vindrlab_kubeConfig }}
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep vinlab | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace vinlab`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: vinlab
+        container-registry-url: vindrlab.azurecr.io
+        container-registry-username: ${{ steps.create-acr.outputs.acr_username }}
+        container-registry-password: ${{ steps.create-acr.outputs.acr_password }}
+        secret-name: vindrlabdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: vinlab
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          vindrlab.azurecr.io/vindrlab:${{ github.sha }}
+        imagepullsecrets: |
+          vindrlabdockerauth   
